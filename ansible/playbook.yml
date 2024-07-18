@@ -1,0 +1,65 @@
+- hosts: localhost
+  tasks:
+    - name: Descargar la imagen de Nginx con Podman
+      command: podman pull nginx:latest
+
+    - name: Iniciar sesión en ACR
+      command: az acr login --name devopspracticeacrleyre
+
+    - name: Etiquetar la imagen de Nginx para el ACR
+      command: podman tag nginx:latest devopspracticeacrleyre.azurecr.io/nginx:casopractico2
+
+    - name: Subir la imagen de Nginx al ACR
+      command: podman push devopspracticeacrleyre.azurecr.io/nginx:casopractico2
+
+
+- hosts: vm
+  become: yes
+  tasks:
+    - name: Instalar Podman
+      apt:
+        name: podman
+        state: present
+        update_cache: yes
+
+    - name: Iniciar sesión en ACR
+      command: podman login devopspracticeacrleyre.azurecr.io -u <acr-username> -p <acr-password>
+
+    - name: Descargar la imagen del ACR
+      command: podman pull devopspracticeacrleyre.azurecr.io/nginx:casopractico2
+
+    - name: Desplegar servidor web con Podman
+      command: podman run -d --name webserver -p 80:80 devopspracticeacrleyre.azurecr.io/nginx:casopractico2
+
+    - name: Configurar autenticación básica y certificado SSL
+      shell: |
+        htpasswd -c /etc/nginx/.htpasswd admin
+        openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 -subj "/C=US/ST=State/L=City/O=Organization/OU=Department/CN=example.com" -keyout /etc/nginx/ssl/nginx.key -out /etc/nginx/ssl/nginx.crt
+      args:
+        creates: /etc/nginx/ssl/nginx.crt
+
+    - name: Configurar Nginx para usar SSL y autenticación
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        line: |
+          server {
+            listen 443 ssl;
+            server_name example.com;
+
+            ssl_certificate /etc/nginx/ssl/nginx.crt;
+            ssl_certificate_key /etc/nginx/ssl/nginx.key;
+
+            location / {
+              auth_basic "Restricted";
+              auth_basic_user_file /etc/nginx/.htpasswd;
+            }
+          }
+        insertafter: '^http {'
+
+- hosts: localhost
+  tasks:
+    - name: Configurar kubectl para usar el cluster AKS
+      command: az aks get-credentials --resource-group devops-practice-rg-leyre --name devops-aks-leyre
+
+    - name: Desplegar aplicación en AKS
+      command: kubectl apply -f deployment.yml
